@@ -153,6 +153,37 @@ class Override(BaseModel):
     note: str = ""
 
 
+class SearchQuery(BaseModel):
+    """What a fetch should cover (SPEC §9). Empty lists / None mean "everything"."""
+
+    cities: list[str] = Field(default_factory=list)
+    property_types: list[PropertyType] = Field(default_factory=list)
+    offer_type: OfferType | None = None
+
+    def matches(self, listing: Listing) -> bool:
+        if self.cities and listing.city not in self.cities:
+            return False
+        if self.property_types and listing.property_type not in self.property_types:
+            return False
+        return self.offer_type is None or listing.offer_type is self.offer_type
+
+
+class FetchRun(BaseModel):
+    """Log entry for one run of one adapter (shown on the data/import page)."""
+
+    source: str
+    started_at: datetime
+    finished_at: datetime
+    fetched: int = 0  # raw listings delivered by the source
+    new: int = 0
+    changed: int = 0
+    unchanged: int = 0
+    relisted: int = 0
+    gone: int = 0
+    errors: list[str] = Field(default_factory=list)  # one message per rejected listing
+    note: str = ""
+
+
 # --- area keys -------------------------------------------------------------------------
 # `AreaReference.area_key` can address three levels. One string format per level keeps
 # the lookup trivial:   "Berlin"   |   "Berlin/Mitte"   |   "plz:10115"

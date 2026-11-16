@@ -23,6 +23,7 @@ from immo.core.history import UpsertOutcome, UpsertResult, diff_tracked
 from immo.core.models import (
     AreaMetric,
     AreaReference,
+    FetchRun,
     Listing,
     ListingSnapshot,
     OfferType,
@@ -30,12 +31,14 @@ from immo.core.models import (
     OverrideField,
     PropertyType,
     ReferenceSource,
+    SearchQuery,
     listing_fingerprint,
     utcnow,
 )
 from immo.storage.tables import (
     AreaReferenceRow,
     Base,
+    FetchRunRow,
     ListingRow,
     ListingSnapshotRow,
     OverrideRow,
@@ -189,11 +192,14 @@ class Repository:
         source: str,
         seen_source_ids: Iterable[str],
         seen_at: datetime | None = None,
+        scope: SearchQuery | None = None,
     ) -> list[str]:
         """Mark active listings of `source` that were NOT seen in a fetch as inactive.
 
-        Returns the ids of the listings that went offline. Each gets a snapshot with
-        the status change, so "relisted" can be derived later.
+        `scope` is the query of the fetch: a fetch that only asked for Berlin must not
+        deactivate listings in Potsdam. Returns the ids of the listings that went
+        offline. Each gets a snapshot with the status change, so "relisted" can be
+        derived later.
         """
         seen_at = seen_at or utcnow()
         seen = set(seen_source_ids)
@@ -204,6 +210,8 @@ class Repository:
             ).all()
             for row in rows:
                 if row.source_listing_id in seen:
+                    continue
+                if scope is not None and not scope.matches(_row_to_listing(row)):
                     continue
                 row.is_active = False
                 session.add(
@@ -384,3 +392,33 @@ class Repository:
         for override in self.list_overrides():
             grouped[override.listing_id].append(override)
         return dict(grouped)
+
+    # --- fetch log -----------------------------------------------------------------
+
+    def add_fetch_run(self, run: FetchRun) -> None:
+        with self._session() as session:
+            session.add(FetchRunRow(**run.model_dump()))
+            session.commit()
+
+    def list_fetch_runs(self, limit: int = 20, source: str | None = None) -> list[FetchRun]:
+        """The most recent runs first."""
+        query = select(FetchRunRow).order_by(FetchRunRow.id.desc()).limit(limit)
+        if source is not None:
+            query = query.where(FetchRunRow.source == source)
+        fields = tuple(FetchRun.model_fields)
+        with self._session() as session:
+            return [
+                FetchRun(**{name: getattr(row, name) for name in fields})
+                for row in session.scalars(query)
+            ]
+
+    def count_fetch_runs(self, source: str) -> int:
+        with self._session() as session:
+            return (
+                session.scalar(
+                    select(func.count())
+                    .select_from(FetchRunRow)
+                    .where(FetchRunRow.source == source)
+                )
+                or 0
+            )

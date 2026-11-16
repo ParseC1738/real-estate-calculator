@@ -100,3 +100,20 @@ class OverrideRow(Base):
     value: Mapped[float]
     created_at: Mapped[datetime]
     note: Mapped[str] = mapped_column(default="")
+
+
+class FetchRunRow(Base):
+    __tablename__ = "fetch_runs"
+
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    source: Mapped[str] = mapped_column(String(50), index=True)
+    started_at: Mapped[datetime]
+    finished_at: Mapped[datetime]
+    fetched: Mapped[int] = mapped_column(default=0)
+    new: Mapped[int] = mapped_column(default=0)
+    changed: Mapped[int] = mapped_column(default=0)
+    unchanged: Mapped[int] = mapped_column(default=0)
+    relisted: Mapped[int] = mapped_column(default=0)
+    gone: Mapped[int] = mapped_column(default=0)
+    errors: Mapped[list[str]] = mapped_column(JSON, default=list)
+    note: Mapped[str] = mapped_column(default="")
