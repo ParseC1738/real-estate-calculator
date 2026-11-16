@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+dist/
+build/
+
+# Tools
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Local data (SQLite database is rebuilt with `immo.cli seed --reset`)
+data/*.db
+data/*.db-journal
+
+# User-saved assumption profiles (local, personal)
+config/profiles/*.yaml
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
