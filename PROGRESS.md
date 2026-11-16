@@ -13,7 +13,7 @@ questions for you.
 | M2 | Assumptions + metrics | `m2-metrics` | ✅ merged |
 | M3 | Sample data | `m3-sample-data` | ✅ merged |
 | M4 | Rent estimate | `m4-rent-estimate` | ✅ merged |
-| M5 | UI: overview + detail | `m5-ui-overview` | ⏳ |
+| M5 | UI: overview + detail | `m5-ui-overview` | ✅ merged |
 | M6 | UI: assumptions, areas, rentals, overrides | `m6-ui-pages` | ⏳ |
 | M7 | Adapters + ingest + CSV | `m7-ingest` | ⏳ |
 | M8 | Real reference data | – | skipped (as requested) |
@@ -355,3 +355,71 @@ rest have no living area); 171 with confidence high, 74 medium.
     but in a thin district it pulls "price vs. area" towards 0 %.
 14. **Year-built bands** are not used as a segment yet (only size bands), although real
     Mietspiegel tables are organised by year built. Relevant for M8.
+
+---
+
+## M5 – UI: overview, filters, detail view
+
+**Built**
+- `ui/app.py`: entry point with `st.navigation` (one script per page in `ui/pages/`).
+- `ui/pages/overview.py`: KPI row, sortable table of all KAUF listings with the signal
+  column, sidebar filters (city, district, type, price, area, rooms, year built, days
+  online, min. gross/net yield, min. cash flow, max. price vs. area, only price-reduced,
+  only active), two summary charts and the chart data as a table.
+- `ui/pages/detail.py`: header with link, KPI row, and four tabs – *Calculation* (every
+  step with its numbers), *Rent estimate* (every source with weight and sample size),
+  *Price history* (step chart + event list), *Property data* (with the origin of values
+  and the raw source data).
+- Helper modules without any Streamlit call: `ui/tables.py` (DataFrame + filters),
+  `ui/charts.py` (Plotly figures), `ui/explain.py` (calculation steps),
+  `ui/formatting.py` (the only place where numbers are rounded).
+- `ui/state.py`: cached repository, assumptions in the session, loading the market.
+- 24 new tests: 17 for the helpers, 7 headless page tests with Streamlit's `AppTest`.
+- Checked by eye in a real browser (light and dark theme) via screenshots.
+
+**Decisions and why**
+- **Thin pages, logic in plain functions.** Streamlit pages are hard to unit-test, so
+  everything with an "if" in it (filtering, table building, binning, formatting) lives in
+  normal functions that take data and return data. The pages only wire widgets to them.
+- **Nothing is cached except the database connection.** Every interaction reloads the
+  listings and recalculates all metrics (≈ 0.1 s for 700 listings). That is what makes a
+  changed assumption or override visible everywhere immediately – and there is no cache
+  to invalidate.
+- **Filters with "unknown" values:** a range slider that still covers the full range is
+  treated as "no filter", so listings with a missing value (e.g. no year built) stay
+  visible until you actually narrow that filter.
+- **Yield / cash-flow filters are minimums, price-vs-area is a maximum.** That matches
+  how you search ("at least 5 %", "at least 10 % below the area"). Property values
+  (price, area, rooms, year, days online) are from–to ranges.
+- **Signal = icon + word** ("🟢 good / 🟡 fair / 🔴 weak"), never colour alone, so it also
+  works for colour-blind readers and in a sorted/exported table.
+- **Charts** (rules I followed, in case you add more):
+  - one colour for a single series; a *fixed* colour per property type, so applying a
+    filter never repaints the remaining bars;
+  - the palette was checked with a colour-blindness validator for light and dark theme;
+  - outliers (e.g. a 40 % "yield" from a price typo) are collected in a "10+" bar
+    instead of stretching the axis;
+  - values are written at the bar ends and the same data is available as a table.
+- **Row selection + button to open the detail view** instead of jumping on click: the
+  table keeps its selection when you come back, and an automatic jump would bounce you
+  straight back into the detail page.
+- **English UI with the German terms in brackets** (Kaufnebenkosten, Kaufpreisfaktor …),
+  matching SPEC and glossary.
+
+**Rejected alternatives**
+- *`st.cache_data` for listings/metrics*: faster on paper, but stale data after an
+  override or import is a worse problem than 0.1 s per click.
+- *Classic `pages/` auto-discovery*: `st.navigation` gives explicit order, titles and
+  icons in one place and lets the tests switch pages by path.
+- *Streamlit's built-in chart theme*: it moved the legend onto the bars; the charts now
+  use their own small theme (`theme=None`) with explicit margins.
+- *Colouring whole table rows by signal*: needs pandas Styler, which disables some
+  dataframe features (sorting stays, but formatting conflicts) – an icon column is
+  simpler and accessible.
+
+**Open questions**
+15. **Table columns**: all 24 columns are shown and you scroll horizontally. Tell me
+    which ones you actually use and I will put those first / hide the rest.
+16. **Detail view covers KAUF listings only.** Rental listings get their own table page
+    in M6 (per SPEC §8.5) but no detail page. Needed?
+17. **UI language** is English with German terms in brackets. Prefer German?
