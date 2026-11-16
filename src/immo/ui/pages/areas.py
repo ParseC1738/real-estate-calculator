@@ -77,7 +77,7 @@ def main() -> None:
     for source in sources:
         config[source.value] = money(fmt.source(source.value), format="%,.2f €")
         config[f"own_vs_{source.value}_pct"] = money(
-            f"Own vs. {source.value}",
+            f"Own vs. {fmt.source(source.value).split(' (')[0]}",
             format="%+.1f %%",
             help="How far the own-listings median is above (+) or below (−) this source.",
         )

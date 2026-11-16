@@ -14,7 +14,7 @@ questions for you.
 | M3 | Sample data | `m3-sample-data` | ✅ merged |
 | M4 | Rent estimate | `m4-rent-estimate` | ✅ merged |
 | M5 | UI: overview + detail | `m5-ui-overview` | ✅ merged |
-| M6 | UI: assumptions, areas, rentals, overrides | `m6-ui-pages` | ⏳ |
+| M6 | UI: assumptions, areas, rentals, overrides | `m6-ui-pages` | ✅ merged |
 | M7 | Adapters + ingest + CSV | `m7-ingest` | ⏳ |
 | M8 | Real reference data | – | skipped (as requested) |
 
@@ -423,3 +423,65 @@ rest have no living area); 171 with confidence high, 74 medium.
 16. **Detail view covers KAUF listings only.** Rental listings get their own table page
     in M6 (per SPEC §8.5) but no detail page. Needed?
 17. **UI language** is English with German terms in brackets. Prefer German?
+
+---
+
+## M6 – UI: assumptions, area statistics, rental listings, overrides
+
+**Built**
+- `ui/pages/assumptions.py`: every assumption as an input (purchase costs, financing,
+  running costs, rent strategy + blend weight + minimum samples, signal thresholds), a
+  live "effect on the active listings" row, and profiles (save / load / reset).
+- `ui/pages/areas.py`: own-listing medians next to Mietspiegel, price map, valuation
+  committee and BORIS – per city or per district, as chart and table, with the
+  difference in percent; plus the full list of stored references.
+- `ui/pages/rentals.py`: table and filters for MIETE listings with rent per m²,
+  vs. Mietspiegel and vs. area.
+- Detail view: new **Overrides** tab (rent, price, living area) with a list of active
+  overrides and a remove button each. The overview gets an "Override" column.
+- `MarketIndex`: exact per-area lookups (`own_median`, `stored_reference`,
+  `area_keys`); `ui/tables.py`: `rental_table`, `area_table`, shared filter helper;
+  `ui/widgets.py`: shared range slider.
+- 21 new tests. The acceptance criterion "changes affect metrics immediately" is
+  tested end to end: change the interest rate on the assumptions page → the cash flow on
+  the overview page is different in the same session; save an override → the gross yield
+  of that listing changes. Both flows were also clicked through in a real browser.
+
+**Decisions and why**
+- **Assumptions live in the browser session (`st.session_state`), profiles on disk.**
+  Every widget change builds a new `Assumptions` object and stores it in the session;
+  all pages read it from there. Nothing is written to disk until you save a profile, so
+  you can play with the sliders without changing your defaults.
+- **Loading a profile bumps a "generation" number that is part of every widget key.**
+  Streamlit widgets remember their own value under their key and ignore a new `value=`
+  afterwards. New keys = fresh widgets that start from the loaded profile.
+- **One slider for the blend** ("weight of the market value", the rest is the
+  Mietspiegel) instead of two inputs that must add up to 100 %.
+- **Overrides are written to the database immediately** (they belong to a listing and
+  should survive a restart), while assumptions are session state (they are a "what if").
+- **Explicit "Remove override" buttons.** Clearing a number field in a Streamlit form
+  does not reliably send "empty", so removing by clearing the field was unreliable in
+  the browser test. A button is also clearer.
+- **The area page shows exact values per area (no fallback).** In the rent estimate a
+  thin district falls back to the city; on the statistics page that would hide where
+  data is missing, so thin areas stay empty.
+- **Three series per chart at most** (own listings + two stored sources), each with a
+  fixed colour, values written on the bars, same data in the table below.
+
+**Rejected alternatives**
+- *An "Apply" button for assumptions*: the SPEC wants immediate updates, and
+  recalculating everything takes ~0.1 s.
+- *Storing the active assumptions in the database*: they would then leak into the next
+  session; a profile is the explicit way to keep a set.
+- *Overwriting `config/assumptions.yaml` from the UI*: it is version-controlled and has
+  comments; a UI save would strip them. Profiles are separate files.
+- *Editing overrides inline in the overview table (`st.data_editor`)*: easy to change a
+  value by accident; the detail view makes it a deliberate action.
+
+**Open questions**
+18. **Assumptions reset when you close the browser tab** (unless saved as a profile).
+    Should the last-used profile be loaded automatically on start?
+19. **Overrides have one optional note per save**, not a history. Enough?
+20. **No "save as default" button** (see above). Do you want one anyway?
+21. **Area page compares cities or the districts of one city.** Postal-code level is
+    supported by the data model but has no view yet (the sample data has no PLZ values).
