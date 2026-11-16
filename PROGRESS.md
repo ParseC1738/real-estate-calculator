@@ -11,7 +11,7 @@ questions for you.
 | M0 | Repo setup | `m0-setup` | ✅ merged |
 | M1 | Data model | `m1-data-model` | ✅ merged |
 | M2 | Assumptions + metrics | `m2-metrics` | ✅ merged |
-| M3 | Sample data | `m3-sample-data` | ⏳ |
+| M3 | Sample data | `m3-sample-data` | ✅ merged |
 | M4 | Rent estimate | `m4-rent-estimate` | ⏳ |
 | M5 | UI: overview + detail | `m5-ui-overview` | ⏳ |
 | M6 | UI: assumptions, areas, rentals, overrides | `m6-ui-pages` | ⏳ |
@@ -217,3 +217,64 @@ rent_upside_pct (MFH) = (market_rent − actual_rent) / actual_rent × 100
 7. **Surrounding municipalities** are all treated as Brandenburg for the transfer tax.
    That is correct for the current region, but would need a real city → state mapping
    if the region grows (e.g. towards Saxony-Anhalt).
+
+---
+
+## M3 – Sample data generator
+
+**Built**
+- `core/sample_data.py`: `SampleWorld(seed)` – a small simulated market: 300 KAUF +
+  400 MIETE listings over 3 cities / 28 districts / all 4 property types, with a
+  lifecycle per listing (appears, price changes, goes offline, comes back).
+  `area_references()` returns 164 invented references (Mietspiegel, price map,
+  valuation committee, BORIS) at city and district level.
+- `pipeline/seed.py`: `seed_database()` replays 12 simulated weekly fetches.
+- `cli.py`: `uv run python -m immo.cli seed --reset [--seed N]`.
+- Repository: the batch upsert now loads all known rows with one query (seed went from
+  ~4.5 s to ~1 s).
+- 20 new tests (determinism, volumes, realistic medians, messiness, history, CLI).
+
+**What the seeded database looks like (seed 42)**
+- 700 listings, 590 active; 1,091 snapshots.
+- KAUF: 73 listings with 1–3 price drops, 31 offline, 13 relisted; up to 77 days online.
+- Messy on purpose: ~5 % without living area, 10 % without rooms, 8 % without district,
+  55 % without commission, ~2 % outliers (a digit missing/too many in price or area –
+  labelled in `raw["sample_note"]`).
+- 25 % of flats and 80 % of apartment buildings have an actual rent (below asking rents).
+
+**Decisions and why**
+- **The generator simulates fetch rounds instead of writing a history directly.**
+  `listings_at(round)` answers "what would a fetch see in week N?". Seeding feeds these
+  rounds through `upsert_listings()` + `deactivate_missing()` – the same code path real
+  fetches will use in M7. So the sample history also acts as an end-to-end test of the
+  snapshot logic, and there is no second, hand-written way to create history.
+- **Deterministic by seed, timestamps relative to "now".** All randomness comes from one
+  `random.Random(seed)`, and listing ids are UUIDv5 hashes of the sample id, so two runs
+  give identical data. Dates are anchored to the moment of seeding (last round = now);
+  otherwise "days online" would grow forever. Tests pass a fixed `now`.
+- **12 extra "future" rounds are simulated too.** They are not seeded; M7's "Fetch now"
+  can step through them so the import log shows new / changed / gone listings.
+- **Prices and rents share the same district factor** (rents with a damped exponent),
+  so yields differ between districts in a plausible way: cheaper districts yield more.
+- **Sample references are clearly labelled** (`note = "SAMPLE DATA - invented value …"`)
+  so they can never be mistaken for the real Mietspiegel values of M8.
+- **`seed` without `--reset` refuses to run on a non-empty database** instead of mixing
+  sample data into real data.
+- **CLI with `argparse`** (standard library) – one command does not justify a dependency.
+
+**Rejected alternatives**
+- *Faker / factory libraries*: nicer names, but an extra dependency and harder to keep
+  the price logic consistent across cities.
+- *Generating snapshots directly in the generator*: faster, but it would duplicate the
+  change-detection rules and could drift from the real pipeline.
+- *Fixed calendar dates for the history*: fully static data, but every listing would be
+  "hundreds of days online" a few months from now.
+- *Typer/Click for the CLI*: more comfortable for many commands; not needed yet.
+
+**Open questions**
+8. **Only the 3 cities are generated**, no surrounding municipalities of Brandenburg
+   a. d. Havel (SPEC §7 says "spread over the 3 cities"). Add e.g. Kloster Lehnin or
+   Beetzsee as separate "cities"?
+9. **Sample ranges** follow SPEC §7 for flats and rents; house, apartment-building and
+   land prices are my own rough guesses (house ≈ 0.9 ×, MFH ≈ 0.62 × the flat price per
+   m²). Tell me if they look off for the region.

@@ -123,30 +123,41 @@ class Repository:
         All listings are handled in one transaction: either all are stored or none.
         """
         seen_at = seen_at or utcnow()
+        listings = list(listings)
         results: list[UpsertResult] = []
         with self._session() as session:
+            # Load all known rows of the affected sources with ONE query instead of
+            # one query per listing (matters for fetches with hundreds of listings).
+            sources = {listing.source for listing in listings}
+            known = {
+                (row.source, row.source_listing_id): row
+                for row in session.scalars(select(ListingRow).where(ListingRow.source.in_(sources)))
+            }
             for listing in listings:
-                results.append(self._upsert_one(session, listing, seen_at))
+                results.append(self._upsert_one(session, known, listing, seen_at))
             session.commit()
         return results
 
-    def _upsert_one(self, session: Session, listing: Listing, seen_at: datetime) -> UpsertResult:
-        row = session.scalar(
-            select(ListingRow).where(
-                ListingRow.source == listing.source,
-                ListingRow.source_listing_id == listing.source_listing_id,
-            )
-        )
+    def _upsert_one(
+        self,
+        session: Session,
+        known: dict[tuple[str, str], ListingRow],
+        listing: Listing,
+        seen_at: datetime,
+    ) -> UpsertResult:
+        key = (listing.source, listing.source_listing_id)
+        row = known.get(key)
         if row is None:
             new = listing.model_copy(
                 update={"first_seen": seen_at, "last_seen": seen_at, "is_active": True}
             )
-            session.add(ListingRow(**_listing_to_values(new)))
+            row = ListingRow(**_listing_to_values(new))
+            session.add(row)
             session.add(
                 ListingSnapshotRow(listing_id=new.id, seen_at=seen_at, price=new.price, changes={})
             )
-            # flush so a second listing with the same key in this batch finds the row
-            session.flush()
+            # remember it, so a second listing with the same key in this batch is an update
+            known[key] = row
             return UpsertResult(listing_id=new.id, outcome=UpsertOutcome.NEW)
 
         old = _row_to_listing(row)
