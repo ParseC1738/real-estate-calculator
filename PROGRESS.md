@@ -10,7 +10,7 @@ questions for you.
 |---|---|---|---|
 | M0 | Repo setup | `m0-setup` | ✅ merged |
 | M1 | Data model | `m1-data-model` | ✅ merged |
-| M2 | Assumptions + metrics | `m2-metrics` | ⏳ |
+| M2 | Assumptions + metrics | `m2-metrics` | ✅ merged |
 | M3 | Sample data | `m3-sample-data` | ⏳ |
 | M4 | Rent estimate | `m4-rent-estimate` | ⏳ |
 | M5 | UI: overview + detail | `m5-ui-overview` | ⏳ |
@@ -18,13 +18,12 @@ questions for you.
 | M7 | Adapters + ingest + CSV | `m7-ingest` | ⏳ |
 | M8 | Real reference data | – | skipped (as requested) |
 
-## ⚠️ Blockers / things you need to do
+## Blockers
 
-- **`git push` is refused (HTTP 403).** The Claude GitHub App has no write access to
-  `ParseC1738/real-estate-calculator`. Everything is committed locally (milestone
-  branches + `main`), and the push is retried after every step. To fix: connect GitHub at
-  <https://claude.ai/connect-github> and install the Claude GitHub App on the repository.
-  See "Git workflow in this run" below for what gets pushed once access works.
+- none at the moment.
+- *Resolved:* during M0 every `git push` was refused (HTTP 403, the Claude GitHub App had
+  no write access). Work continued with local commits; from M1 on the pushes went through
+  and the M0 branch was pushed afterwards.
 
 ## Git workflow in this run
 
@@ -134,3 +133,87 @@ questions for you.
 2. **Overrides replace each other** (no override history). Do you want a history?
 3. **No migrations**: after a schema change you must run `seed --reset` (loses overrides).
    Fine for the POC; Alembic would be the next step once real data is in the DB.
+
+---
+
+## M2 – Assumptions + metrics engine
+
+**Built**
+- `config/assumptions.yaml` with all defaults from SPEC §6.1 (commented).
+- `core/assumptions.py`: `Assumptions` model, `load_assumptions` / `save_assumptions`,
+  and profiles (`save_profile`, `list_profiles`, `load_profile` → one YAML file per
+  profile in `config/profiles/`).
+- `core/metrics.py`: `buy_metrics()` (all KAUF types), `rent_listing_metrics()` (MIETE),
+  and the building blocks `purchase_costs()`, `annuity_month()`, `price_per_m2()`,
+  `pct_diff()`, `traffic_light()`.
+- `core/overrides.py`: `apply_overrides()` returns a copy of the listing with overridden
+  price / living area and remembers the origin of each value.
+- 41 new tests; every metric has a hand-calculated example with the calculation written
+  next to the expected number.
+
+**Formulas (as implemented)**
+```
+purchase_costs        = price × (transfer_tax + notary_land_registry + commission) / 100
+total_investment      = price + purchase_costs
+annual_cold_rent      = rent_month × 12
+gross_yield_pct       = annual_cold_rent / price × 100
+price_to_rent_factor  = price / annual_cold_rent
+net_operating_income  = annual_cold_rent
+                        − annual_cold_rent × non_recoverable_costs_pct / 100
+                        − maintenance_eur_m2_year × living_area_m2
+                        − annual_cold_rent × vacancy_pct / 100
+net_yield_pct         = net_operating_income / total_investment × 100
+equity                = total_investment × equity_pct / 100
+loan                  = total_investment − equity
+annuity_month         = loan × (interest_rate_pct + repayment_pct) / 100 / 12
+cashflow_month_pretax = net_operating_income / 12 − annuity_month
+cash_on_cash_pct      = cashflow_month_pretax × 12 / equity × 100
+rent_upside_pct (MFH) = (market_rent − actual_rent) / actual_rent × 100
+```
+
+**Decisions and why**
+- **`buy_metrics()` receives everything "external" as plain numbers** (the rent, the
+  area average, the land value). It never looks anything up itself. That is what keeps
+  it pure: no database, no estimate logic, and each test fits in a few lines.
+- **One flat result object (`BuyMetrics`) with `None` for "not applicable".** A plot
+  simply has `gross_yield_pct = None`; the UI shows that as "n/a" (SPEC §6.4). A flat
+  object also maps 1:1 to table columns later.
+- **`commission_pct = None` ≠ `0`.** `None` means "unknown → use the default" and the
+  commission is marked `ESTIMATED`; `0` is a real "commission-free" and marked `ACTUAL`.
+- **Defaults exist twice (YAML + model defaults), guarded by a test.** The YAML is for
+  editing without code; the model defaults make a missing key or file harmless.
+  `test_shipped_yaml_equals_the_code_defaults` fails if they drift apart.
+- **Unknown keys in the YAML are an error** (`extra="forbid"`). A typo like
+  `intrest_rate_pct` would otherwise be ignored silently and you would calculate with
+  the default without noticing.
+- **`rent_strategy` and the traffic-light thresholds are part of the assumptions**, so a
+  saved profile captures them too.
+- **Profiles are YAML files**, not database rows: readable, diff-able, easy to copy.
+  They are git-ignored (`config/profiles/*.yaml`) because they are personal.
+- **Transfer tax by city name**: "Berlin" → Berlin rate, everything else → Brandenburg
+  rate (the app's region only covers these two states).
+- **Missing living area**: the maintenance reserve is set to 0 and a note is attached to
+  the result instead of dropping all net metrics.
+
+**Rejected alternatives**
+- *Storing metrics in the database*: SPEC §6 says they are calculated on display so that
+  changed assumptions take effect immediately.
+- *Decimal instead of float for money*: more exact, but CLAUDE.md prescribes float and
+  for estimates the difference is irrelevant.
+- *A class hierarchy per property type* (`FlatMetrics`, `PlotMetrics`, …): more types,
+  no real benefit over one result with optional fields at this size.
+- *Exact annuity formula with a fixed loan term*: the SPEC defines the simple German
+  "Zins + anfängliche Tilgung" annuity, which is also what banks quote.
+
+**Open questions**
+4. **Hausgeld is not used in the calculation yet.** The SPEC formula takes
+   non-recoverable costs as a percentage of the rent (15 %). For flats one could instead
+   use a share of the actual Hausgeld (e.g. 35–40 % is typically non-recoverable). Which
+   do you prefer?
+5. **Financing metrics for plots** (equity/loan/annuity) are not calculated because the
+   SPEC lists them under ETW/HAUS/MFH only. Would they be useful for plots too?
+6. **Traffic light** is based on the gross yield only (the SPEC's example). More
+   indicators (net yield, cash flow, price vs. area) can be added via the config.
+7. **Surrounding municipalities** are all treated as Brandenburg for the transfer tax.
+   That is correct for the current region, but would need a real city → state mapping
+   if the region grows (e.g. towards Saxony-Anhalt).

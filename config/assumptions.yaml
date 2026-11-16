@@ -1,0 +1,36 @@
+# Default assumptions for all calculations (SPEC §6.1).
+# Edit here or on the "Assumptions" page of the app. Percentages are written as 5.2,
+# not 0.052. A missing key falls back to the built-in default; an unknown key is an error
+# (so a typo is noticed instead of being silently ignored).
+#
+# NOTE: tax rates must be checked against official sources before real use.
+
+# --- purchase costs (Kaufnebenkosten), in % of the purchase price ---
+transfer_tax_pct:            # Grunderwerbsteuer, by federal state
+  berlin: 6.0
+  brandenburg: 6.5
+notary_land_registry_pct: 2.0    # notary ~1.5 + land registry ~0.5
+default_commission_pct: 3.57     # buyer's broker commission when the listing gives none
+
+# --- financing ---
+equity_pct: 20.0                 # share of the total investment paid with own money
+interest_rate_pct: 3.8           # per year
+repayment_pct: 2.0               # initial repayment per year
+
+# --- running costs ---
+non_recoverable_costs_pct_of_rent: 15.0   # costs that can't be passed on to the tenant
+maintenance_eur_m2_year: 12.0             # maintenance reserve per m² living area
+vacancy_pct: 2.0                          # rent loss risk, in % of the annual cold rent
+
+# --- rent estimate ---
+rent_strategy: blend             # market | mietspiegel | blend
+rent_blend_weights:
+  market: 0.6
+  mietspiegel: 0.4
+min_samples_own_listings: 5      # own listings are only used with at least this many
+
+# --- traffic light: green >= green_min, yellow >= yellow_min, otherwise red ---
+traffic_light:
+  gross_yield_pct:
+    green_min: 5.0
+    yellow_min: 3.5
