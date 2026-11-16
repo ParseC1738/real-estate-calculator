@@ -9,7 +9,7 @@ questions for you.
 | # | Milestone | Branch | Status |
 |---|---|---|---|
 | M0 | Repo setup | `m0-setup` | ✅ merged |
-| M1 | Data model | `m1-data-model` | ⏳ |
+| M1 | Data model | `m1-data-model` | ✅ merged |
 | M2 | Assumptions + metrics | `m2-metrics` | ⏳ |
 | M3 | Sample data | `m3-sample-data` | ⏳ |
 | M4 | Rent estimate | `m4-rent-estimate` | ⏳ |
@@ -75,3 +75,62 @@ questions for you.
 
 **Open questions**
 - none
+
+---
+
+## M1 – Data model
+
+**Built**
+- `core/models.py`: enums (`PropertyType`, `OfferType`, `ValueOrigin`, plus `AreaMetric`,
+  `ReferenceSource`, `OverrideField`) and Pydantic models `Listing`, `ListingSnapshot`,
+  `AreaReference`, `Override`; area-key helpers; `listing_fingerprint()`.
+- `core/history.py`: pure functions `diff_tracked()` (what changed?) and
+  `summarize_history()` (days online, price changes, total change in %, relisted).
+- `storage/db.py`, `storage/tables.py`, `storage/repository.py`: SQLite via
+  SQLAlchemy 2.0; upsert with snapshots, deactivate/relist, area references, overrides.
+- `paths.py`: one place for file locations (`IMMO_DB_PATH` overrides the DB file).
+- 40 new tests (models, history, repository on an in-memory database).
+
+**Decisions and why**
+- **Two sets of classes: Pydantic models (`core`) and table rows (`storage`).** It looks
+  like duplication, but it is what keeps `core/` free of SQLAlchemy: the models describe
+  *meaning and validation*, the tables describe *storage*. Only the repository converts
+  between them, so the rest of the app never sees a table row.
+- **Repository pattern, one method = one transaction.** Callers say *what* they want
+  (`repo.list_listings(offer_type=KAUF)`), never *how* (no SQL, no sessions outside
+  `storage/`). Batches (`upsert_listings`) run in a single transaction: all or nothing.
+- **Change detection is a pure function in `core/history.py`; the repository only
+  decides when to store.** That makes "what counts as a change" testable without a
+  database. Tracked fields: `price`, `living_area_m2`, `plot_area_m2`, `title`,
+  `is_active` (SPEC §4.3: "price, area, title, status").
+- **The first sighting also creates a snapshot** (with empty `changes`). It records the
+  starting price, so "total price change in %" and the price chart need no special case.
+- **Going offline and coming back are stored as `is_active` changes in the snapshots.**
+  "Relisted" is then simply "there is a snapshot where `is_active` went false → true".
+- **Enums are stored as plain strings**, not as database enum types – readable in any
+  SQLite browser and no migration needed when a value is added.
+- **Naive UTC datetimes everywhere** (`models.utcnow()`). SQLite has no time-zone
+  support and returns naive values; mixing aware and naive datetimes raises errors.
+- **`fingerprint` is derived, not part of the `Listing` model.** The repository computes
+  it on every upsert and stores it in an indexed column. One source of truth, and it can
+  never be out of date. (Deduplication itself is "later" in the SPEC.)
+- **Extra enums beyond SPEC §4.1** (`AreaMetric`, `ReferenceSource`, `OverrideField`):
+  the SPEC lists these as fixed sets of strings; enums catch typos at validation time.
+- **`AreaReference.sample_size`** added (not in SPEC §4.4): needed to show how many own
+  listings a median is based on (SPEC §5.2 asks for the sample size per component).
+
+**Rejected alternatives**
+- *SQLModel (one class for model + table)*: less code, but it would pull SQLAlchemy into
+  `core/` and break the architecture rule.
+- *Alembic migrations*: overkill for a POC whose database is rebuilt with
+  `seed --reset`. New tables are created automatically; changed columns need a reset.
+- *Timezone-aware datetimes*: more correct in general, but painful with SQLite.
+- *Keeping every version of an override*: SPEC §4.5 only needs the current value; a new
+  value for the same field replaces the old one.
+
+**Open questions**
+1. **Days online for relisted listings** currently counts from the very first sighting
+   and does not subtract the time the listing was offline. OK, or should gaps be removed?
+2. **Overrides replace each other** (no override history). Do you want a history?
+3. **No migrations**: after a schema change you must run `seed --reset` (loses overrides).
+   Fine for the POC; Alembic would be the next step once real data is in the DB.
