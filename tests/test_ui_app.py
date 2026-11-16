@@ -4,28 +4,12 @@ They do not check pixels; they check that every page runs against the sample dat
 without an exception and shows the expected elements.
 """
 
-import pytest
 from streamlit.testing.v1 import AppTest
 
 from immo.core.models import OfferType, PropertyType
 from immo.paths import PROJECT_ROOT
-from immo.pipeline.seed import seed_database
-from immo.storage.db import make_engine
-from immo.storage.repository import Repository
-from tests.conftest import T0
 
 APP = str(PROJECT_ROOT / "src" / "immo" / "ui" / "app.py")
-
-
-@pytest.fixture(scope="module")
-def sample_db(tmp_path_factory):
-    """A seeded SQLite file; IMMO_DB_PATH points the app at it."""
-    path = tmp_path_factory.mktemp("ui") / "immo.db"
-    with pytest.MonkeyPatch.context() as patch:
-        patch.setenv("IMMO_DB_PATH", str(path))
-        repo = Repository(make_engine())
-        seed_database(repo, now=T0)
-        yield repo
 
 
 def run_app() -> AppTest:
@@ -92,17 +76,19 @@ def test_detail_view_for_a_flat(sample_db):
     assert app.header[0].value == flat.title
     assert metric(app, "Price").replace(",", "").startswith(f"{flat.price:.0f}")
     assert metric(app, "Gross yield") != "n/a"
-    assert [t.label for t in app.tabs] == [
+    tabs = {t.label: t for t in app.tabs}
+    assert list(tabs) == [
         "Calculation",
         "Rent estimate",
+        "Overrides",
         "Price history",
         "Property data",
     ]
-    steps = app.tabs[0].dataframe[0].value
+    steps = tabs["Calculation"].dataframe[0].value
     assert "Gross yield (Bruttomietrendite)" in set(steps["Metric"])
-    sources = app.tabs[1].dataframe[0].value
+    sources = tabs["Rent estimate"].dataframe[0].value
     assert {"Source", "Rent €/m²", "Weight", "Samples"} <= set(sources.columns)
-    assert len(app.tabs[2].get("plotly_chart")) == 1
+    assert len(tabs["Price history"].get("plotly_chart")) == 1
 
 
 def test_detail_view_for_a_plot_shows_na_for_yields(sample_db):
@@ -124,10 +110,10 @@ def test_every_sale_listing_renders_in_the_detail_view(sample_db):
     app = AppTest.from_file(APP, default_timeout=30)
     app.run()
     app.switch_page("pages/detail.py").run()
-    picker = app.selectbox[0]
-    for listing_id in picker.options[::12]:  # every 12th listing keeps the test fast
-        picker.select(listing_id).run()
-        assert not app.exception, listing_id
+    for option in app.selectbox[0].options[::12]:  # every 12th listing keeps the test fast
+        # fetch the widget again each time: the element tree is rebuilt on every run
+        app.selectbox[0].select(option).run()
+        assert not app.exception, option
 
 
 def test_empty_database_shows_a_hint(tmp_path, monkeypatch):

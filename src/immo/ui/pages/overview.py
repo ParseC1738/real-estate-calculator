@@ -6,24 +6,7 @@ import streamlit as st
 from immo.ui import charts, state
 from immo.ui import formatting as fmt
 from immo.ui.tables import BuyFilters, buy_table, filter_buy_table
-
-
-def _range_filter(label: str, column: pd.Series, step: float, fmt_str: str | None = None):
-    """A range slider over a column. Returns None while it covers the full range,
-
-    so listings with an unknown value are only hidden once the user narrows it.
-    """
-    values = column.dropna()
-    if values.empty or values.min() == values.max():
-        return None
-    low = float(values.min() // step * step)
-    high = float(-(-values.max() // step) * step)  # round up to the next step
-    chosen = st.slider(label, low, high, (low, high), step=float(step), format=fmt_str)
-    return None if chosen == (low, high) else chosen
-
-
-def _optional_number(label: str, help_text: str, step: float) -> float | None:
-    return st.number_input(label, value=None, step=step, help=help_text, placeholder="any")
+from immo.ui.widgets import optional_number, range_filter
 
 
 def sidebar_filters(table: pd.DataFrame) -> BuyFilters:
@@ -45,23 +28,23 @@ def sidebar_filters(table: pd.DataFrame) -> BuyFilters:
         )
 
         with st.expander("Property", expanded=False):
-            filters.price = _range_filter("Price (€)", table["price"], 10_000, "%d")
-            filters.area_m2 = _range_filter("Area (m²)", table["area_m2"], 10, "%d")
-            filters.rooms = _range_filter("Rooms", table["rooms"], 1, "%d")
-            filters.year_built = _range_filter("Year built", table["year_built"], 5, "%d")
-            filters.days_online = _range_filter("Days online", table["days_online"], 7, "%d")
+            filters.price = range_filter("Price (€)", table["price"], 10_000, "%d")
+            filters.area_m2 = range_filter("Area (m²)", table["area_m2"], 10, "%d")
+            filters.rooms = range_filter("Rooms", table["rooms"], 1, "%d")
+            filters.year_built = range_filter("Year built", table["year_built"], 5, "%d")
+            filters.days_online = range_filter("Days online", table["days_online"], 7, "%d")
 
         with st.expander("Return", expanded=True):
-            filters.min_gross_yield_pct = _optional_number(
+            filters.min_gross_yield_pct = optional_number(
                 "Min. gross yield (%)", "Hides plots, which have no yield.", 0.5
             )
-            filters.min_net_yield_pct = _optional_number(
+            filters.min_net_yield_pct = optional_number(
                 "Min. net yield (%)", "After non-recoverable costs, maintenance, vacancy.", 0.5
             )
-            filters.min_cashflow_month = _optional_number(
+            filters.min_cashflow_month = optional_number(
                 "Min. cash flow (€/month)", "Before tax, with the current financing.", 50.0
             )
-            filters.max_price_vs_area_pct = _optional_number(
+            filters.max_price_vs_area_pct = optional_number(
                 "Max. price vs. area (%)", "E.g. -10 = at least 10 % cheaper than the area.", 5.0
             )
     return filters
@@ -105,6 +88,9 @@ COLUMN_CONFIG = {
     "price_drops": st.column_config.NumberColumn("Drops", format="%d"),
     "relisted": st.column_config.CheckboxColumn("Relisted"),
     "is_active": st.column_config.CheckboxColumn("Active"),
+    "overridden": st.column_config.CheckboxColumn(
+        "Override", help="You overrode price, living area or rent for this listing."
+    ),
     "url": st.column_config.LinkColumn("Link", display_text="open"),
 }
 

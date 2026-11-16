@@ -11,6 +11,9 @@ st.set_page_config(page_title="Immo-Rendite", page_icon="🏠", layout="wide")
 PAGES = [
     st.Page("pages/overview.py", title="Overview", icon="📊", default=True),
     st.Page("pages/detail.py", title="Detail view", icon="🔎"),
+    st.Page("pages/assumptions.py", title="Assumptions", icon="⚙️"),
+    st.Page("pages/areas.py", title="Area statistics", icon="🗺️"),
+    st.Page("pages/rentals.py", title="Rental listings", icon="🔑"),
 ]
 
 st.navigation(PAGES).run()
