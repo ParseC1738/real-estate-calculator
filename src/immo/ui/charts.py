@@ -192,3 +192,40 @@ def price_history(
     fig.update_yaxes(title_text="Asking price", ticksuffix=" €", tickformat=",.0f")
     fig.update_xaxes(showgrid=False)
     return fig
+
+
+def area_comparison(
+    table: pd.DataFrame, sources: list[tuple[str, str]], unit: str, theme: str = "light"
+) -> go.Figure:
+    """Sources side by side per area, as grouped horizontal bars.
+
+    `sources` is a list of (column in `table`, legend label); at most three, so every
+    source keeps its own fixed colour slot.
+    """
+    c = _colors(theme)
+    areas = list(table["area"])[::-1]  # reversed: first area on top
+    fig = go.Figure()
+    for slot, (column, label) in reversed(list(enumerate(sources[:3]))):
+        rows = table[table[column].notna()].set_index("area")
+        present = [a for a in areas if a in rows.index]
+        if not present:
+            continue
+        decimals = 2 if rows[column].max() < 100 else 0
+        fig.add_bar(
+            orientation="h",
+            name=label,
+            y=present,
+            x=[rows.loc[a, column] for a in present],
+            marker_color=c["series"][slot],
+            text=[f"{rows.loc[a, column]:,.{decimals}f}" for a in present],
+            textposition="outside",
+            textfont={"color": c["text"]},
+            cliponaxis=False,
+            hovertemplate="%{y} · " + label + "<br>%{x:,.2f} " + unit + "<extra></extra>",
+        )
+    _base_layout(fig, theme, height=max(260, 30 * len(sources) * len(areas) + 130))
+    fig.update_layout(barmode="group", bargap=0.3, bargroupgap=0.08)
+    fig.update_layout(legend={"traceorder": "reversed"}, margin={"l": 210, "r": 80, "t": 50})
+    fig.update_xaxes(title_text=unit, tickformat=",.0f")
+    fig.update_yaxes(showgrid=False, categoryorder="array", categoryarray=areas)
+    return fig

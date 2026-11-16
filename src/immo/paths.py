@@ -16,3 +16,9 @@ def db_path() -> Path:
     """Location of the SQLite file. `IMMO_DB_PATH` overrides the default (used by tests)."""
     override = os.environ.get("IMMO_DB_PATH")
     return Path(override) if override else DATA_DIR / "immo.db"
+
+
+def profiles_dir() -> Path:
+    """Folder for saved assumption profiles. `IMMO_PROFILES_DIR` overrides it (tests)."""
+    override = os.environ.get("IMMO_PROFILES_DIR")
+    return Path(override) if override else PROFILES_DIR

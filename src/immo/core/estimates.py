@@ -198,6 +198,43 @@ class MarketIndex:
         candidates.append((city, property_type, None))
         return candidates
 
+    # --- exact lookups for the area statistics page --------------------------------
+
+    def area_keys(self) -> list[str]:
+        """Every area that has own listings or stored references, sorted."""
+        keys = {key[0] for key in self._rents} | {key[0] for key in self._prices}
+        keys |= {key[2] for key in self._references}
+        return sorted(keys)
+
+    def own_median(
+        self, metric: AreaMetric, area_key: str, property_type: PropertyType | None
+    ) -> AreaReference | None:
+        """Median of the own listings in exactly this area (no fallback to a wider one).
+
+        `RENT_M2` uses rental listings, every other metric the sale listings.
+        """
+        groups = self._rents if metric is AreaMetric.RENT_M2 else self._prices
+        return self._median_reference(groups, [(area_key, property_type, None)], metric)
+
+    def stored_reference(
+        self,
+        metric: AreaMetric,
+        source: ReferenceSource,
+        area_key: str,
+        property_type: PropertyType | None = None,
+    ) -> AreaReference | None:
+        """The stored reference for exactly this area (type-specific beats general)."""
+        best: AreaReference | None = None
+        for ref in self._references.get((metric, source, area_key), []):
+            if ref.property_type not in (None, property_type) or ref.segment is not None:
+                continue
+            if best is None or (ref.property_type is not None, ref.valid_from) > (
+                best.property_type is not None,
+                best.valid_from,
+            ):
+                best = ref
+        return best
+
     # --- lookups -------------------------------------------------------------------
 
     def own_rent_m2(self, listing: Listing) -> AreaReference | None:

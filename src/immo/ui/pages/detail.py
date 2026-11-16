@@ -5,7 +5,7 @@ import streamlit as st
 
 from immo.core.evaluate import BuyEvaluation
 from immo.core.history import price_series
-from immo.core.models import OfferType, PropertyType
+from immo.core.models import OfferType, Override, OverrideField, PropertyType
 from immo.ui import charts, state
 from immo.ui import formatting as fmt
 from immo.ui.explain import explain_buy
@@ -200,6 +200,92 @@ def _history(e: BuyEvaluation, market: state.Market) -> None:
     )
 
 
+OVERRIDE_INPUTS = {
+    OverrideField.RENT_MONTH: ("Cold rent per month (€)", 10.0),
+    OverrideField.PRICE: ("Purchase price (€)", 1000.0),
+    OverrideField.LIVING_AREA_M2: ("Living area (m²)", 1.0),
+}
+
+
+def _overrides(e: BuyEvaluation, market: state.Market) -> None:
+    """Let the user replace rent, price or living area for this one listing."""
+    listing = e.listing
+    existing = {o.field: o for o in market.overrides.get(listing.id, [])}
+    originals = {
+        OverrideField.RENT_MONTH: (
+            listing.actual_rent_month
+            if listing.actual_rent_month is not None
+            else (e.market_rent.value_month if e.market_rent else None)
+        ),
+        OverrideField.PRICE: listing.price,
+        OverrideField.LIVING_AREA_M2: listing.living_area_m2,
+    }
+    st.caption(
+        "An override always wins over the listing's value and over any estimate. It is "
+        "stored for this listing only; the original data is never changed."
+    )
+    fields = list(OVERRIDE_INPUTS)
+    if listing.property_type is PropertyType.GRUNDSTUECK:
+        fields = [OverrideField.PRICE]  # a plot has neither rent nor living area
+
+    with st.form(f"overrides_{listing.id}"):
+        values = {}
+        for column, field in zip(st.columns(len(fields)), fields, strict=True):
+            label, step = OVERRIDE_INPUTS[field]
+            original = originals[field]
+            values[field] = column.number_input(
+                label,
+                min_value=0.0,
+                value=existing[field].value if field in existing else None,
+                step=step,
+                placeholder="no override",
+                help="Without override: "
+                + (fmt.num(original, 2) if original is not None else "unknown"),
+            )
+        note = st.text_input("Note (optional)", placeholder="e.g. rent after renovation")
+        submitted = st.form_submit_button("Save overrides", type="primary")
+
+    if submitted:
+        repo = state.get_repo()
+        for field, value in values.items():
+            current = existing.get(field)
+            if value is None or value <= 0:
+                if current is not None:
+                    repo.delete_override(listing.id, field)
+            elif current is None or current.value != value:
+                repo.set_override(
+                    Override(listing_id=listing.id, field=field, value=value, note=note)
+                )
+        st.rerun()  # recalculate everything with the new overrides
+
+    if existing:
+        st.markdown("**Active overrides**")
+        st.dataframe(
+            pd.DataFrame(
+                [
+                    {
+                        "Field": OVERRIDE_INPUTS[o.field][0],
+                        "Override": o.value,
+                        "Without override": originals[o.field],
+                        "Set on": o.created_at,
+                        "Note": o.note,
+                    }
+                    for o in existing.values()
+                ]
+            ),
+            hide_index=True,
+            width="stretch",
+            column_config={"Set on": st.column_config.DatetimeColumn(format="DD MMM YYYY, HH:mm")},
+        )
+        for column, override in zip(st.columns(len(fields)), existing.values(), strict=False):
+            label = OVERRIDE_INPUTS[override.field][0]
+            if column.button(f"Remove override: {label}", key=f"remove_{override.field.value}"):
+                state.get_repo().delete_override(listing.id, override.field)
+                st.rerun()
+    else:
+        st.info("No overrides for this listing.")
+
+
 def main() -> None:
     st.title("Detail view")
     assumptions = state.get_assumptions()
@@ -213,9 +299,11 @@ def main() -> None:
     _header(evaluation)
     _kpis(evaluation)
 
-    tab_calc, tab_rent, tab_history, tab_data = st.tabs(
-        ["Calculation", "Rent estimate", "Price history", "Property data"]
+    tab_calc, tab_rent, tab_overrides, tab_history, tab_data = st.tabs(
+        ["Calculation", "Rent estimate", "Overrides", "Price history", "Property data"]
     )
+    with tab_overrides:
+        _overrides(evaluation, market)
     with tab_calc:
         _calculation(evaluation, assumptions)
     with tab_rent:

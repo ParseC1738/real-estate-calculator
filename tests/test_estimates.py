@@ -415,3 +415,40 @@ def test_plots_use_plot_area_and_only_own_listings():
     assert market.area_price_m2(plot(99, 400)).value == 250
     assert market.land_value_m2(plot(99, 400)).value == 180
     assert index([], [boris]).area_price_m2(plot(99, 400)) is None
+
+
+# --- exact lookups (area statistics page) ------------------------------------------
+
+
+def test_area_keys_lists_areas_from_listings_and_references():
+    market = index(rentals(1), [ref(ReferenceSource.BORIS, 500, area_key="Berlin",
+                                    metric=AreaMetric.LAND_VALUE_M2)])  # fmt: skip
+    assert market.area_keys() == ["Berlin", "Potsdam", "Potsdam/Babelsberg"]
+
+
+def test_own_median_is_exact_and_respects_min_samples():
+    market = index(rentals(5, 12.0) + [sale(i, 4000) for i in range(5)])
+    rent = market.own_median(AreaMetric.RENT_M2, "Potsdam/Babelsberg", PropertyType.ETW)
+    assert (rent.value, rent.sample_size) == (12.0, 5)
+    price = market.own_median(AreaMetric.BUY_PRICE_M2, "Potsdam", PropertyType.ETW)
+    assert price.value == 4000
+    assert market.own_median(AreaMetric.RENT_M2, "Potsdam", PropertyType.HAUS) is None
+    assert market.own_median(AreaMetric.RENT_M2, "Berlin", PropertyType.ETW) is None
+    assert market.own_median(AreaMetric.RENT_M2, "Potsdam", None).sample_size == 5  # all types
+    thin = index(rentals(4))
+    assert thin.own_median(AreaMetric.RENT_M2, "Potsdam", PropertyType.ETW) is None
+
+
+def test_stored_reference_is_exact_per_area():
+    city = ref(ReferenceSource.MIETSPIEGEL, 10.0)
+    flats = ref(ReferenceSource.MIETSPIEGEL, 10.5, property_type="ETW")
+    market = index([], [city, flats])
+    get = market.stored_reference
+    assert get(AreaMetric.RENT_M2, ReferenceSource.MIETSPIEGEL, "Potsdam").value == 10.0
+    assert (
+        get(AreaMetric.RENT_M2, ReferenceSource.MIETSPIEGEL, "Potsdam", PropertyType.ETW).value
+        == 10.5
+    )
+    # no fallback from the district to the city, and no other sources
+    assert get(AreaMetric.RENT_M2, ReferenceSource.MIETSPIEGEL, "Potsdam/Babelsberg") is None
+    assert get(AreaMetric.RENT_M2, ReferenceSource.PRICE_MAP, "Potsdam") is None

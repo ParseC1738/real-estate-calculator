@@ -54,3 +54,20 @@ def seeded_repo() -> Repository:
     repository = Repository(make_engine(IN_MEMORY_URL))
     seed_database(repository, now=T0)
     return repository
+
+
+@pytest.fixture(scope="module")
+def sample_db(tmp_path_factory):
+    """A seeded SQLite FILE for the Streamlit page tests (one per test module).
+
+    The app finds it through the IMMO_DB_PATH environment variable. Tests that write
+    (overrides, imports) must undo their changes, because the module shares the file.
+    """
+    from immo.pipeline.seed import seed_database
+
+    path = tmp_path_factory.mktemp("ui") / "immo.db"
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setenv("IMMO_DB_PATH", str(path))
+        repository = Repository(make_engine())
+        seed_database(repository, now=T0)
+        yield repository
