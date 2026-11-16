@@ -41,3 +41,16 @@ def listing() -> Listing:
 def repo() -> Repository:
     """A repository on a fresh in-memory SQLite database (gone after the test)."""
     return Repository(make_engine(IN_MEMORY_URL))
+
+
+@pytest.fixture(scope="session")
+def seeded_repo() -> Repository:
+    """One sample database for all read-only tests (seeding takes about a second).
+
+    Tests that write must use the function-scoped `repo` fixture instead.
+    """
+    from immo.pipeline.seed import seed_database
+
+    repository = Repository(make_engine(IN_MEMORY_URL))
+    seed_database(repository, now=T0)
+    return repository
