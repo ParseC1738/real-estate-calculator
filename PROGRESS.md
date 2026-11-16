@@ -12,7 +12,7 @@ questions for you.
 | M1 | Data model | `m1-data-model` | ✅ merged |
 | M2 | Assumptions + metrics | `m2-metrics` | ✅ merged |
 | M3 | Sample data | `m3-sample-data` | ✅ merged |
-| M4 | Rent estimate | `m4-rent-estimate` | ⏳ |
+| M4 | Rent estimate | `m4-rent-estimate` | ✅ merged |
 | M5 | UI: overview + detail | `m5-ui-overview` | ⏳ |
 | M6 | UI: assumptions, areas, rentals, overrides | `m6-ui-pages` | ⏳ |
 | M7 | Adapters + ingest + CSV | `m7-ingest` | ⏳ |
@@ -278,3 +278,80 @@ rent_upside_pct (MFH) = (market_rent − actual_rent) / actual_rent × 100
 9. **Sample ranges** follow SPEC §7 for flats and rents; house, apartment-building and
    land prices are my own rough guesses (house ≈ 0.9 ×, MFH ≈ 0.62 × the flat price per
    m²). Tell me if they look off for the region.
+
+---
+
+## M4 – Rent estimate
+
+**Built**
+- `core/estimates.py`
+  - `MarketIndex`: groups own listings (rent and price per m²) and stored references
+    once; lookups per listing are then dictionary accesses.
+  - `estimate_rent()`: the three strategies `market`, `mietspiegel`, `blend`.
+  - `resolve_rent()`: order of precedence override → actual rent → estimate.
+  - `RentEstimate` with `components` (source, €/m², weight, sample size, area level)
+    and `confidence`.
+  - Area averages: `area_price_m2()` (own sale listings → price map → valuation
+    committee), `land_value_m2()` (BORIS), `mietspiegel_rent_m2()`.
+- `core/evaluate.py`: `evaluate_buy()` / `evaluate_rental()` chain overrides → rent →
+  metrics → history for one listing. This is the single function the UI will call.
+- 55 new tests, including "too few samples", every fallback, and a run over the whole
+  sample database.
+
+**How an estimate is built**
+1. *Own listings*: median asking rent per m² of comparable rentals, tried from most to
+   least specific – district + type + size band → district + type → city + type + size
+   band → city + type → whole city. A level is only used with ≥ `min_samples` listings.
+2. *References*: most specific area wins – district → postal code → city; within an
+   area a value for exactly this type / size band beats a general one.
+3. *Strategy*: `market` = own listings, else price map · `mietspiegel` = official table ·
+   `blend` = weighted average (weights renormalised if one side is missing).
+4. Rent = €/m² × living area.
+
+On the sample database: 245 of 261 flats/houses/apartment buildings get a rent (the
+rest have no living area); 171 with confidence high, 74 medium.
+
+**Decisions and why**
+- **Median, not mean.** The sample data contains typos on purpose (a rent with a digit
+  too many). The median ignores them; a mean would be dragged away.
+- **Every source found is listed, also the ones the strategy did not use (weight 0).**
+  That is the transparency principle: the detail view can show own listings, price map
+  and Mietspiegel side by side even when only one of them was used.
+- **An MFH is compared with flats of its average unit size** (living area ÷ units),
+  because an apartment building is rented out flat by flat. Houses prefer house
+  rentals and fall back to all rentals in the city.
+- **Confidence rule** (my interpretation of "how many sources agree and how many
+  samples"): one point if at least two sources lie within ±25 % of the estimate, one
+  point if the estimate rests on ≥ 2 × `min_samples` own listings. 2 points = high,
+  1 = medium, 0 = low. Actual rents and overrides are always "high".
+- **No silent fallback between strategies.** If you choose `mietspiegel` and there is no
+  table for the area, there is no estimate (instead of quietly using market data). Only
+  the fallbacks named in the SPEC exist (own listings → price map; blend with one side).
+- **Own-listing medians are computed on the fly, not stored** as `AreaReference` rows.
+  They change with every fetch; storing them would create stale copies. They are still
+  returned *as* `AreaReference` objects (source `own_listings`), so the rest of the code
+  treats all sources the same way.
+- **The actual rent is used unless the listing says it is not rented**
+  (`is_rented = False`); an unknown flag counts as rented.
+- **`rent_upside_pct` for MFH always compares with the pure market estimate**, even when
+  an override is active.
+
+**Rejected alternatives**
+- *Trimmed mean / outlier filtering before the median*: more knobs, no visible gain yet.
+- *Regression model (rent ~ area + year + district)*: far too much for a POC and it
+  would hide where a number comes from.
+- *Postal code as its own grouping level for own listings*: district and city are
+  enough for the sample data; postal codes are supported for stored references.
+
+**Open questions**
+10. **Inactive rental listings are included in the medians** (a flat that was rented out
+    last week still describes the market). With real data you may want a time window,
+    e.g. "seen in the last 6 months".
+11. **Asking rents ≠ contract rents.** The market value is the median *asking* rent; no
+    discount is applied. Should there be a configurable haircut?
+12. **Confidence thresholds** (±25 %, 2 × min samples) are constants in
+    `core/estimates.py`. Move them into `assumptions.yaml`?
+13. **The area average includes the listing itself.** Negligible with many listings,
+    but in a thin district it pulls "price vs. area" towards 0 %.
+14. **Year-built bands** are not used as a segment yet (only size bands), although real
+    Mietspiegel tables are organised by year built. Relevant for M8.
