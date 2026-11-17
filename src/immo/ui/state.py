@@ -132,7 +132,8 @@ def evaluate_all_rentals(market: Market) -> list[RentalEvaluation]:
 
 def show_empty_database_hint() -> None:
     st.info(
-        "The database is empty. Load the sample data first:\n\n"
+        "The database is empty. Load the sample data first – on the **Data / import** page "
+        "or in the terminal:\n\n"
         "```bash\nuv run python -m immo.cli seed --reset\n```"
     )
 

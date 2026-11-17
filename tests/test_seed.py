@@ -77,3 +77,33 @@ def test_cli_seed_reset(tmp_path, monkeypatch, capsys):
     # without --reset the command refuses and returns an error code
     assert cli.main(["seed"]) == 1
     assert "--reset" in capsys.readouterr().err
+
+
+def test_cli_ingest_fetches_from_active_adapters(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("IMMO_DB_PATH", str(tmp_path / "immo.db"))
+    cli.main(["seed", "--reset"])
+    capsys.readouterr()
+
+    assert cli.main(["ingest"]) == 0
+    out = capsys.readouterr().out
+    assert out.startswith("sample: fetched") and "new 8" in out
+    assert Repository(make_engine()).count_listings() == 708
+
+
+def test_cli_ingest_csv(tmp_path, monkeypatch, capsys):
+    from immo.sources.csv_import import TEMPLATE_CSV
+
+    monkeypatch.setenv("IMMO_DB_PATH", str(tmp_path / "immo.db"))
+    good = tmp_path / "listings.csv"
+    good.write_text(TEMPLATE_CSV, encoding="utf-8")
+    bad = tmp_path / "bad.csv"
+    bad.write_text("title;price\nFlat;1\n", encoding="utf-8")
+
+    assert cli.main(["ingest", "--csv", str(good)]) == 0
+    assert "csv: fetched 4 | new 4" in capsys.readouterr().out
+    assert Repository(make_engine()).count_listings() == 4
+
+    assert cli.main(["ingest", "--csv", str(bad)]) == 1  # wrong columns
+    assert "fetch failed" in capsys.readouterr().out
+    assert cli.main(["ingest", "--csv", str(tmp_path / "missing.csv")]) == 1
+    assert "cannot read" in capsys.readouterr().err
