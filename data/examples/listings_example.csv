@@ -1,0 +1,5 @@
+source_listing_id;offer_type;property_type;title;city;district;postal_code;price;living_area_m2;plot_area_m2;rooms;units;year_built;condition;actual_rent_month;hausgeld_month;commission_pct;is_rented;url
+my-001;KAUF;ETW;3-Zimmer-Wohnung mit Balkon;Potsdam;Babelsberg;14482;329.000;78,5;;3;;1998;well kept;;310;3,57;nein;
+my-002;KAUF;MFH;Mehrfamilienhaus mit 6 Einheiten;Brandenburg an der Havel;Neustadt;14776;790.000;430;620;;6;1925;renovated;3.650;;;ja;
+my-003;KAUF;GRUNDSTUECK;Baugrundstück am Stadtrand;Berlin;Spandau;13581;265.000;;540;;;;;;;;;
+my-004;MIETE;ETW;2-Zimmer-Wohnung, saniert;Berlin;Pankow;13187;890;58;;2;;1965;renovated;;;;;
