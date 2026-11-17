@@ -1,4 +1,4 @@
-"""Fill the database with sample data (used by `immo.cli seed` and later by the UI)."""
+"""Fill the database with sample data (used by `immo.cli seed` and by the UI)."""
 
 from __future__ import annotations
 
@@ -7,13 +7,9 @@ from datetime import datetime
 from pydantic import BaseModel
 
 from immo.core.models import utcnow
-from immo.core.sample_data import (
-    DEFAULT_SEED,
-    HISTORY_ROUNDS,
-    SAMPLE_SOURCE,
-    SampleWorld,
-    round_time,
-)
+from immo.core.sample_data import DEFAULT_SEED, HISTORY_ROUNDS, SampleWorld, round_time
+from immo.pipeline.ingest import run_ingest
+from immo.sources.sample import SampleAdapter
 from immo.storage.repository import Repository
 
 
@@ -32,11 +28,12 @@ def seed_database(
     now: datetime | None = None,
     reset: bool = False,
 ) -> SeedSummary:
-    """Replay the simulated fetch rounds into the database.
+    """Replay the simulated fetch rounds through the normal ingest pipeline.
 
-    Each round is handled like a real fetch: upsert everything that is online, then
-    mark what was not seen as inactive. Price drops, listings going offline and
-    relistings therefore end up in the snapshot history by themselves.
+    Each round is handled exactly like a real fetch: upsert everything that is online,
+    then mark what was not seen as inactive. Price drops, listings going offline and
+    relistings therefore end up in the snapshot history by themselves, and each round
+    shows up in the fetch log.
     """
     now = now or utcnow()
     if reset:
@@ -46,12 +43,8 @@ def seed_database(
 
     world = SampleWorld(seed=seed)
     for round_index in range(HISTORY_ROUNDS):
-        seen_at = round_time(round_index, now)
-        listings = world.listings_at(round_index, seen_at)
-        repo.upsert_listings(listings, seen_at)
-        repo.deactivate_missing(
-            SAMPLE_SOURCE, [listing.source_listing_id for listing in listings], seen_at
-        )
+        adapter = SampleAdapter(round_index=round_index, world=world)
+        run_ingest(adapter, repo, now=round_time(round_index, now))
     references = repo.add_area_references(world.area_references(valid_from=now.date()))
 
     snapshots = repo.snapshots_by_listing()

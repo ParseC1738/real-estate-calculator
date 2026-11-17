@@ -15,7 +15,7 @@ questions for you.
 | M4 | Rent estimate | `m4-rent-estimate` | ✅ merged |
 | M5 | UI: overview + detail | `m5-ui-overview` | ✅ merged |
 | M6 | UI: assumptions, areas, rentals, overrides | `m6-ui-pages` | ✅ merged |
-| M7 | Adapters + ingest + CSV | `m7-ingest` | ⏳ |
+| M7 | Adapters + ingest + CSV | `m7-ingest` | ✅ merged |
 | M8 | Real reference data | – | skipped (as requested) |
 
 ## Blockers
@@ -485,3 +485,116 @@ rest have no living area); 171 with confidence high, 74 medium.
 20. **No "save as default" button** (see above). Do you want one anyway?
 21. **Area page compares cities or the districts of one city.** Postal-code level is
     supported by the data model but has no view yet (the sample data has no PLZ values).
+
+---
+
+## M7 – Adapter interface, ingest pipeline, CSV import, "Fetch now"
+
+**Built**
+- `sources/base.py`: `SourceAdapter` protocol (`name`, `fetch(query)`, `normalize(raw)`)
+  and `RawListing`. `core/models.py`: `SearchQuery` and `FetchRun`.
+- `sources/sample.py`: `SampleAdapter` (one simulated fetch round per instance).
+- `sources/csv_import.py`: `CsvAdapter` – `;` or `,` separated, German or English
+  numbers (`250.000,50` / `250000.5`), yes/no values, UTF-8 or Excel encoding; unknown
+  columns are kept in `raw`. Template: `data/examples/listings_example.csv`.
+- `pipeline/ingest.py`: `run_ingest()` = fetch → normalize → validate → upsert +
+  snapshot → deactivate missing, with a `FetchRun` log entry per run.
+- `sources/registry.py`: `active_adapters()` – what "Fetch now" runs.
+- `pipeline/seed.py` now replays the sample rounds through `run_ingest()`.
+- Repository: `fetch_runs` table, `deactivate_missing(..., scope=query)`.
+- CLI: `immo.cli ingest` (all active adapters) and `immo.cli ingest --csv FILE`.
+- UI page **Data / import**: "Fetch now", CSV upload with a list of skipped rows, run
+  log, template download, "reload sample data" behind a confirmation checkbox.
+- 51 new tests. The acceptance criterion "CSV import creates snapshots correctly" is
+  covered by five scenarios in `tests/test_ingest.py` (first import → initial snapshot;
+  same file again → no snapshot; changed price → snapshot with old and new value;
+  missing listing → "gone" snapshot; back again → "relisted") plus one through the UI.
+
+**Decisions and why**
+- **`Protocol` instead of a base class.** An adapter does not inherit from anything; it
+  only needs `name`, `fetch` and `normalize`. The pipeline accepts any object that looks
+  like that (there is a test with a 6-line hand-made adapter). This is "duck typing"
+  that type checkers and `isinstance` (via `@runtime_checkable`) still understand.
+- **`fetch` and `normalize` are separate steps.** `fetch` talks to the outside world and
+  returns data untouched; `normalize` is pure and turns one raw record into a `Listing`.
+  That separation lets the pipeline catch a bad record without losing the others, and
+  it keeps the original data in `Listing.raw` for debugging.
+- **One bad listing never stops a run.** Validation errors are collected per listing
+  ("my-004: price: not a number") and shown in the UI/CLI; valid rows are still imported.
+- **Three safety rules for "gone":** (1) a listing that is present but invalid is *not*
+  marked gone; (2) a run that delivers no valid listing marks nothing gone (a broken
+  source is far more likely than an empty market); (3) only listings inside the query's
+  scope can be marked gone – a Berlin-only fetch never deactivates Potsdam.
+- **CSV import does not mark missing listings as gone by default**, because a CSV is
+  usually a partial list. There is a checkbox / `--deactivate-missing` for complete files.
+- **The seed uses the same pipeline as real fetches.** No second code path for creating
+  history, and the 12 seeded rounds appear in the run log.
+- **"Fetch now" advances the sample market by one week per click.** The round to fetch
+  is simply the number of sample runs logged so far, so there is no extra state to keep.
+- **The adapter's `name` always wins as `Listing.source`**, whatever `normalize` sets;
+  otherwise an adapter bug could write into another source's listings.
+- **Active adapters are a function, not a config file** – with one automatic source a
+  config format would be guesswork.
+
+**Rejected alternatives**
+- *pandas for reading the CSV*: convenient, but its type guessing turns postal codes
+  like `01067` into numbers and it is a heavy tool for a small job; the standard `csv`
+  module plus explicit parsing is predictable.
+- *Abstract base class for adapters*: forces inheritance without adding safety here.
+- *Failing the whole import on the first bad row*: frustrating with real, messy files.
+- *A separate "source name" per CSV file*: then re-importing an updated file under a new
+  name would duplicate every listing instead of updating it.
+
+**Open questions**
+22. **`import-reference` (CLI command from SPEC §10) is not built** – it belongs to M8
+    (real Mietspiegel data), which you asked me to skip. The sample references are
+    created by the seed instead.
+23. **CSV columns must be named like the model fields** (`living_area_m2`, …). Do you
+    want German aliases (`wohnflaeche`, `kaufpreis`) or a mapping step for exports from
+    a specific portal?
+24. **All CSV files share the source name `csv`.** Listing ids must therefore be unique
+    across your files. OK?
+25. **Deduplication across sources** is not done (SPEC: later); the `fingerprint` column
+    is stored and indexed for it.
+26. **No real portal adapter** was written and no website was contacted, as agreed.
+    Before building one: check the portal's terms of use and robots.txt, prefer an
+    official API, and add rate limiting and caching (SPEC §9).
+
+---
+
+## How to try it
+
+```bash
+uv sync                                          # install dependencies
+uv run pytest                                    # 256 tests
+uv run python -m immo.cli seed --reset           # load sample data (700 listings)
+uv run streamlit run src/immo/ui/app.py          # open http://localhost:8501
+```
+
+Things worth clicking:
+1. **Overview** – set "Min. gross yield" to 5, sort by "Cash flow/month", select a row
+   and open its detail view.
+2. **Detail view** – the *Calculation* tab shows every step with its numbers; *Rent
+   estimate* shows every source with weight and sample size; *Price history* shows the
+   simulated price drops; *Overrides* lets you set your own rent/price/area.
+3. **Assumptions** – move the interest-rate slider and watch the cash flow change; save
+   the result as a profile.
+4. **Area statistics** – own medians next to the (sample) Mietspiegel and price map.
+5. **Data / import** – click "Fetch now" a few times, then import
+   `data/examples/listings_example.csv`, change a price in the file and import it again:
+   the listing's price history gets a new entry.
+
+```bash
+uv run python -m immo.cli ingest                                   # same as "Fetch now"
+uv run python -m immo.cli ingest --csv data/examples/listings_example.csv
+git log --graph --oneline                                          # one bubble per milestone
+```
+
+## What is next (not done in this run)
+
+- **M8**: enter the real Mietspiegel tables for Berlin, Potsdam and Brandenburg a. d.
+  Havel under `data/reference/` and build `import-reference` (see open question 14 about
+  year-built bands first).
+- Answer the open questions above – several of them change formulas (4, 11) or the data
+  model (1, 2, 14).
+- Later (SPEC): real portal adapters, scheduler, notifications, map, deduplication.

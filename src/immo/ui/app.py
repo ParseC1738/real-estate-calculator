@@ -14,6 +14,7 @@ PAGES = [
     st.Page("pages/assumptions.py", title="Assumptions", icon="⚙️"),
     st.Page("pages/areas.py", title="Area statistics", icon="🗺️"),
     st.Page("pages/rentals.py", title="Rental listings", icon="🔑"),
+    st.Page("pages/data_import.py", title="Data / import", icon="📥"),
 ]
 
 st.navigation(PAGES).run()

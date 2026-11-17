@@ -7,11 +7,13 @@ from immo.core.history import UpsertOutcome, summarize_history
 from immo.core.models import (
     AreaMetric,
     AreaReference,
+    FetchRun,
     OfferType,
     Override,
     OverrideField,
     PropertyType,
     ReferenceSource,
+    SearchQuery,
 )
 from tests.conftest import T0, make_listing
 
@@ -256,3 +258,54 @@ def test_file_database_persists_between_engines(tmp_path, monkeypatch):
     monkeypatch.setenv("IMMO_DB_PATH", str(tmp_path / "sub" / "immo.db"))
     Repository(make_engine()).upsert_listing(make_listing(), seen_at=T0)
     assert Repository(make_engine()).count_listings() == 1
+
+
+# --- M7: scoped deactivation and fetch log -----------------------------------------
+
+
+def test_deactivate_missing_respects_the_query_scope(repo):
+    """A fetch that only covered Berlin flats must not deactivate anything else."""
+    repo.upsert_listings(
+        [
+            make_listing(source_listing_id="berlin-flat", city="Berlin"),
+            make_listing(source_listing_id="berlin-house", city="Berlin", property_type="HAUS"),
+            make_listing(source_listing_id="potsdam-flat", city="Potsdam"),
+            make_listing(source_listing_id="berlin-rental", city="Berlin", offer_type="MIETE"),
+        ],
+        seen_at=T0,
+    )
+    scope = SearchQuery(cities=["Berlin"], property_types=["ETW"], offer_type="KAUF")
+    gone = repo.deactivate_missing("test", seen_source_ids=[], seen_at=T1, scope=scope)
+
+    assert [repo.get_listing(i).source_listing_id for i in gone] == ["berlin-flat"]
+    assert len(repo.list_listings(active_only=True)) == 3
+
+
+def test_search_query_matching():
+    flat = make_listing(city="Berlin")
+    assert SearchQuery().matches(flat)  # empty query = everything
+    assert SearchQuery(cities=["Berlin", "Potsdam"]).matches(flat)
+    assert not SearchQuery(cities=["Potsdam"]).matches(flat)
+    assert not SearchQuery(property_types=["HAUS", "MFH"]).matches(flat)
+    assert not SearchQuery(offer_type="MIETE").matches(flat)
+
+
+def test_fetch_runs_are_logged_newest_first(repo):
+    for i, source in enumerate(["sample", "csv", "sample"]):
+        repo.add_fetch_run(
+            FetchRun(
+                source=source,
+                started_at=T0 + timedelta(hours=i),
+                finished_at=T0 + timedelta(hours=i, seconds=2),
+                fetched=10 + i,
+                new=i,
+                errors=["row 3: price missing"] if source == "csv" else [],
+            )
+        )
+    runs = repo.list_fetch_runs()
+    assert [r.fetched for r in runs] == [12, 11, 10]
+    assert runs[1].errors == ["row 3: price missing"]
+    assert len(repo.list_fetch_runs(limit=1)) == 1
+    assert [r.source for r in repo.list_fetch_runs(source="csv")] == ["csv"]
+    assert repo.count_fetch_runs("sample") == 2
+    assert repo.count_fetch_runs("other") == 0
